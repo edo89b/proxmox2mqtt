@@ -1,0 +1,12 @@
+services:
+  proxmox2mqtt:
+    build: .
+    container_name: proxmox2mqtt
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - mqtt_net
+
+networks:
+  mqtt_net:
+    external: true
