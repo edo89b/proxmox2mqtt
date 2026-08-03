@@ -39,6 +39,35 @@ POLL = int(os.environ.get("POLL_INTERVAL", "15"))
 
 AVAIL = f"{PREFIX}/availability"
 
+# Last availability we asserted on the broker. Kept at module level so on_connect()
+# can re-assert it after a reconnection (see publish_avail below).
+_avail = {"state": None}
+
+
+def publish_avail(client, state):
+    """Publish the retained availability, only when it actually changes.
+
+    Returns True if the value changed, so the caller can log the transition.
+
+    The last asserted value is remembered because the LWT is retained: when the
+    connection drops (broker restart, network blip) the broker publishes a
+    retained "offline". paho reconnects on its own, but without this bookkeeping
+    nothing would ever overwrite that retained "offline" — the bridge would keep
+    streaming guest and node metrics while every consumer saw it as down.
+    """
+    if _avail["state"] == state:
+        return False
+    _avail["state"] = state
+    client.publish(AVAIL, state, qos=1, retain=True)
+    return True
+
+
+def on_connect(client, userdata, flags, rc, properties=None):
+    """Re-assert the current availability on every successful (re)connection."""
+    if _avail["state"] is not None:
+        client.publish(AVAIL, _avail["state"], qos=1, retain=True)
+        log(f"[mqtt] (re)connected -> re-asserted {_avail['state']}")
+
 if not VERIFY_SSL:
     requests.packages.urllib3.disable_warnings()
 
@@ -163,22 +192,20 @@ def main():
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
     client.will_set(AVAIL, "offline", qos=1, retain=True)
+    client.on_connect = on_connect
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.loop_start()
     log(f"[mqtt] {MQTT_HOST}:{MQTT_PORT} as {MQTT_USER}; backups={'on' if pbs else 'off'}")
 
     prev = {}
     known = set()
-    online = None
 
     while True:
         try:
             guests = collect_guests()
             node = pve_get(f"/nodes/{PVE_NODE}/status")
         except Exception as e:
-            if online is not False:
-                client.publish(AVAIL, "offline", qos=1, retain=True)
-                online = False
+            if publish_avail(client, "offline"):
                 log(f"[pve] unreachable: {e}")
             time.sleep(POLL)
             continue
@@ -195,9 +222,8 @@ def main():
             known = ids
             log(f"[discovery] {len(guests)} guests + node")
 
-        if online is not True:
-            client.publish(AVAIL, "online", qos=1, retain=True)
-            online = True
+        if publish_avail(client, "online"):
+            log("[pve] reachable -> online")
 
         now = time.time()
         for g in guests:
