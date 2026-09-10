@@ -3,7 +3,7 @@
 Bridge that polls the Proxmox VE API (and optionally a Proxmox Backup Server)
 with read-only API tokens and publishes node, guest, physical disk and storage
 metrics to MQTT in the Home Assistant discovery format. Any MQTT consumer can
-use the same retained topics.
+use the same retained topics. Public open-source project, MIT licensed.
 
 ## Tech Stack
 
@@ -23,7 +23,8 @@ proxmox2mqtt/
 ├── Dockerfile - python:3.13-slim with requests and paho-mqtt
 ├── docker-compose.yml - service proxmox2mqtt on the external mqtt_net network
 ├── .env.example - configuration template (copy to .env, gitignored)
-├── README.md - user overview and PVE token creation
+├── README.md - user overview: PVE/PBS token setup, variables, MQTT topics
+├── LICENSE - MIT
 ├── scripts/
 │   └── doc_check.py - documentation staleness check
 └── .githooks/
@@ -33,7 +34,8 @@ proxmox2mqtt/
 ## Setup & Commands
 
 PVE token: create it read-only (`PVEAuditor` on `/`) as shown in `README.md`.
-PBS token (optional, for last backup and verify state) on the backup server:
+PBS token (optional, for last backup and verify state) on the backup server,
+same commands as in `README.md`:
 
 ```bash
 proxmox-backup-manager user create monitoring@pbs
@@ -123,7 +125,8 @@ python3 scripts/doc_check.py          # documentation staleness check
 
 ## Related documents
 
-- [README.md](README.md): user overview, PVE token creation, basic variables.
+- [README.md](README.md): user overview, PVE/PBS token setup, every variable,
+  MQTT topic layout.
 
 ## Integrations (census)
 
