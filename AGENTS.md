@@ -184,8 +184,9 @@ MQTT, all under `<BASE>` = `STATE_PREFIX`, default `proxmox2mqtt/<NODE_ID>`:
 7. **Scrub time zone.** `zfs_last_scrub` parses the node's local-time text in
    the container's time zone (the compose file sets none, so UTC): with a node
    in another zone the timestamp is shifted by the offset.
-8. **Start-up and login.** `connect()` has no retry: with the broker not
-   reachable at start the process exits and the restart policy retries. The
+8. **Start-up and login.** `connect_async()` retries by itself (1-60 s), first
+   connection included, and the process waits up to `MQTT_CONNECT_WAIT` (300 s)
+   before going on, so a broker that is down at start no longer kills it. The
    `[mqtt]` start line only means the TCP connection opened; `on_connect`
    ignores the reason code, so rejected credentials are silent here.
 9. **Network rates.** `net_in`/`net_out` appear from the second poll on and

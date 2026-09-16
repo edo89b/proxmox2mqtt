@@ -35,6 +35,7 @@ PBS_DATASTORE = os.environ.get("PBS_DATASTORE", "")
 
 MQTT_HOST = os.environ.get("MQTT_HOST", "mqtt")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+MQTT_CONNECT_WAIT = 300  # seconds waited for the first connection before going on
 MQTT_USER = os.environ.get("MQTT_USER", "proxmox2mqtt")
 MQTT_PASS = os.environ.get("MQTT_PASS", "")
 
@@ -188,6 +189,17 @@ DISK_SENSORS_ATA = dict(
        ("temp_max", ("Temperature max", "\u00b0C", "temperature", None)),
        ("failing_now", ("Attributes failing", None, None, "mdi:alert-decagram"))]
 )
+
+# Sensors whose value is text, not a number. Home Assistant refuses a non-numeric
+# state on an entity declared with state_class "measurement" ("Value error while
+# updating state of sensor..."), so these must never get one. Everything else is a
+# number, with or without a unit (SMART counters, load, guests running...).
+TEXT_KEYS = {
+    "health", "used", "storage", "wwn", "model", "serial",
+    "type", "active", "content", "server",
+    "zfs_pool", "zfs_state", "zfs_layout", "zfs_scrub_info",
+    "backup_verify",
+}
 
 HOURS_PER_YEAR = 8766  # 365.25 days, so leap years do not skew the age
 
@@ -404,7 +416,9 @@ def collect_storages(disks):
             "used_gb": round(used / 1e9, 1) if used else 0,
             "avail_gb": round(avail / 1e9, 1) if avail else 0,
             "used_pct": round(used / total * 100, 1) if total else 0,
-            "content": st.get("content"),
+            # Sorted: the API returns the items in a different order at every poll,
+            # so an unsorted value would look like a state change every time.
+            "content": ",".join(sorted((st.get("content") or "").split(","))),
             "server": c.get("server"),
             "disks": [],
         }
@@ -500,7 +514,7 @@ def sensor_config(dev, dev_id, key, label, unit=None, dclass=None, icon=None,
         "device": dev,
         "availability_topic": AVAIL,
     }
-    if component == "sensor" and dclass != "timestamp":
+    if component == "sensor" and dclass != "timestamp" and key not in TEXT_KEYS:
         payload["state_class"] = "measurement"
     if unit:
         payload["unit_of_measurement"] = unit
@@ -571,8 +585,18 @@ def main():
         client.username_pw_set(MQTT_USER, MQTT_PASS)
     client.will_set(AVAIL, "offline", qos=1, retain=True)
     client.on_connect = on_connect
-    client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    # connect_async + retry: a broker that is not up (or not yet resolvable) at start
+    # used to kill the process, and Docker restarted it in a loop until the broker came
+    # back. Now paho keeps retrying, including the very first connection.
+    client.reconnect_delay_set(min_delay=1, max_delay=60)
+    client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.loop_start()
+    # Wait for the first connection before publishing: QoS 0 messages sent while
+    # disconnected would be dropped silently.
+    for _ in range(MQTT_CONNECT_WAIT):
+        if client.is_connected():
+            break
+        time.sleep(1)
     log(f"[mqtt] {MQTT_HOST}:{MQTT_PORT} as {MQTT_USER}; backups={'on' if pbs else 'off'}")
 
     prev = {}
